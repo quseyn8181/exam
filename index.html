@@ -1,1 +1,387 @@
-.
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Экзаменационная платформа по английскому языку</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #eef2f5; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+        .container { background: white; padding: 30px; border-radius: 12px; max-width: 650px; width: 100%; box-shadow: 0 5px 20px rgba(0,0,0,0.1); }
+        h2, h3 { text-align: center; color: #2c3e50; margin-top: 0; }
+        input, select, button { width: 100%; padding: 12px; margin: 10px 0; border-radius: 6px; border: 1px solid #ccc; font-size: 15px; }
+        button { background: #3498db; color: white; font-weight: bold; border: none; cursor: pointer; transition: 0.2s; }
+        button:hover { background: #2980b9; }
+        .hidden { display: none !important; }
+        .status { text-align: center; font-weight: bold; margin-top: 10px; }
+        
+        /* Стили вопроса */
+        .question-card { background: #f8f9fa; padding: 20px; border-radius: 8px; border-left: 5px solid #3498db; margin-bottom: 20px; }
+        .question-img { max-width: 100%; height: auto; border-radius: 8px; margin-bottom: 15px; display: block; margin-left: auto; margin-right: auto; }
+        .option-btn { background: #ecf0f1; color: #2c3e50; text-align: left; margin: 6px 0; font-weight: normal; }
+        .option-btn:hover { background: #bdc3c7; }
+        .option-btn.selected { background: #3498db; color: white; }
+        
+        /* Стили результатов */
+        .score-box { text-align: center; padding: 20px; background: #e8f8f5; border-radius: 8px; margin-bottom: 20px; }
+        .score-number { font-size: 48px; color: #27ae60; font-weight: bold; }
+        .error-item { padding: 10px; border-bottom: 1px solid #eee; text-align: left; }
+        .error-item span.wrong { color: #e74c3c; font-weight: bold; }
+        .error-item span.correct { color: #27ae60; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    
+    <!-- 1. ФОРМА ВХОДА -->
+    <div id="loginSection">
+        <h2>🔑 Вход в систему</h2>
+        <input type="email" id="email" placeholder="Email / Логин">
+        <input type="password" id="password" placeholder="Пароль">
+        <button id="loginBtn">Войти</button>
+        <div id="loginStatus" class="status"></div>
+    </div>
+
+    <!-- 2. ПАНЕЛЬ АДМИНИСТРАТОРА (для nesib@admin.az) -->
+    <div id="adminSection" class="hidden">
+        <h2>👑 Панель Администратора</h2>
+        <p style="text-align: center; color: #7f8c8d;">Загрузите фото карточки для автоматического создания вопроса нейросетью</p>
+        
+        <label><b>Выберите фото карточки/задания:</b></label>
+        <input type="file" id="photoInput" accept="image/*">
+
+        <label><b>Тип вопроса:</b></label>
+        <select id="typeSelect">
+            <option value="translation">Перевод слова (Выбор из 4 вариантов)</option>
+            <option value="blank">Вставка слова в предложение (Без подсказок)</option>
+        </select>
+
+        <button id="generateBtn">🤖 Сгенерировать вопрос и сохранить</button>
+        <button id="logoutBtnAdmin" style="background:#e74c3c;">Выйти</button>
+        <div id="adminStatus" class="status"></div>
+    </div>
+
+    <!-- 3. СТРАНИЦА ЭКЗАМЕНА ДЛЯ УЧЕНИКОВ -->
+    <div id="examSection" class="hidden">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span id="userInfo" style="font-weight: bold;"></span>
+            <span id="progressInfo" style="color: #7f8c8d;"></span>
+        </div>
+        <hr>
+
+        <div id="questionContainer"></div>
+
+        <button id="nextBtn" class="hidden">Следующий вопрос ➔</button>
+        <button id="finishBtn" class="hidden" style="background:#27ae60;">Завершить экзамен и узнать оценку</button>
+    </div>
+
+    <!-- 4. СТРАНИЦА РЕЗУЛЬТАТОВ -->
+    <div id="resultSection" class="hidden">
+        <h2>📊 Результаты экзамена</h2>
+        <div class="score-box">
+            <div>Ваша честная оценка:</div>
+            <div class="score-number" id="finalScore">0 / 10</div>
+            <div id="correctCountText"></div>
+        </div>
+
+        <h3>Разбор ваших ответов:</h3>
+        <div id="reviewContainer"></div>
+
+        <button id="logoutBtnStudent" style="background:#7f8c8d; margin-top:20px;">Выйти из аккаунта</button>
+    </div>
+
+</div>
+
+<!-- Скрипт подключения Firebase и логика сайта -->
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+    import { getFirestore, collection, addDoc, getDocs } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+    import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
+
+    const firebaseConfig = {
+        apiKey: "AIzaSyDDolC3lzs9QAp81E4Gj7E858P_o33prMY",
+        authDomain: "englishexam-5afbb.firebaseapp.com",
+        projectId: "englishexam-5afbb",
+        storageBucket: "englishexam-5afbb.firebasestorage.app",
+        messagingSenderId: "62639772655",
+        appId: "1:62639772655:web:5c575f50430868efcf5c1a"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const storage = getStorage(app);
+
+    const ADMIN_EMAIL = "nesib@admin.az";
+    const GEMINI_API_KEY = "AQ.Ab8RN6Kgc1Mj238TZSzZu_shF3lPYnEEtqoeRMdGwGJY5W-neA";
+
+    let examQuestions = [];
+    let currentQuestionIndex = 0;
+    let userAnswers = [];
+    let currentUserEmail = "";
+
+    // 1. Авторизация и переключение экранов
+    document.getElementById('loginBtn').addEventListener('click', () => {
+        const email = document.getElementById('email').value.trim();
+        const password = document.getElementById('password').value.trim();
+        const loginStatus = document.getElementById('loginStatus');
+
+        loginStatus.style.color = "#3498db";
+        loginStatus.innerText = "⏳ Вход в систему...";
+
+        signInWithEmailAndPassword(auth, email, password)
+            .then((userCredential) => {
+                loginStatus.innerText = "";
+            })
+            .catch((error) => {
+                loginStatus.style.color = "#e74c3c";
+                loginStatus.innerText = "❌ Ошибка входа: " + error.message;
+            });
+    });
+
+    onAuthStateChanged(auth, (user) => {
+        if (user) {
+            currentUserEmail = user.email;
+            document.getElementById('loginSection').classList.add('hidden');
+
+            if (user.email === ADMIN_EMAIL) {
+                // Если зашел админ
+                document.getElementById('adminSection').classList.remove('hidden');
+                document.getElementById('examSection').classList.add('hidden');
+            } else {
+                // Если зашел ученик
+                document.getElementById('adminSection').classList.add('hidden');
+                document.getElementById('examSection').classList.remove('hidden');
+                document.getElementById('userInfo').innerText = "👤 Ученик: " + user.email;
+                startExam();
+            }
+        } else {
+            // Выход из системы
+            document.getElementById('loginSection').classList.remove('hidden');
+            document.getElementById('adminSection').classList.add('hidden');
+            document.getElementById('examSection').classList.add('hidden');
+            document.getElementById('resultSection').classList.add('hidden');
+        }
+    });
+
+    document.getElementById('logoutBtnAdmin').addEventListener('click', () => signOut(auth));
+    document.getElementById('logoutBtnStudent').addEventListener('click', () => signOut(auth));
+
+    // 2. Логика Админа (Загрузка фото + Генерация Gemini AI)
+    document.getElementById('generateBtn').addEventListener('click', async () => {
+        const fileInput = document.getElementById('photoInput');
+        const qType = document.getElementById('typeSelect').value;
+        const statusDiv = document.getElementById('adminStatus');
+
+        if (!fileInput.files[0]) {
+            alert("Выберите файл с картинкой!");
+            return;
+        }
+
+        statusDiv.style.color = "#3498db";
+        statusDiv.innerText = "⏳ Загрузка в хранилище и анализ нейросетью...";
+        const file = fileInput.files[0];
+
+        try {
+            const storageRef = ref(storage, 'exam_photos/' + Date.now() + '_' + file.name);
+            await uploadBytes(storageRef, file);
+            const photoUrl = await getDownloadURL(storageRef);
+
+            const base64Data = await convertBase64(file);
+
+            const prompt = qType === 'translation' 
+                ? "Проанализируй фото. Найди пару слов (русское и английское). Верни ТОЛЬКО валидный JSON формата: {\"question\": \"Слово на русском\", \"correctAnswer\": \"Слово на английском\", \"options\": [\"правильный_перевод\", \"неправильный1\", \"неправильный2\", \"неправильный3\"]}"
+                : "Проанализируй фото. Составь предложение на английском с пропуском '___' на основе слова с картинки. Верни ТОЛЬКО валидный JSON формата: {\"sentence\": \"I bought a new ___ yesterday.\", \"correctAnswer\": \"book\"}";
+
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    contents: [{
+                        parts: [
+                            { text: prompt },
+                            { inlineData: { mimeType: file.type, data: base64Data } }
+                        ]
+                    }]
+                })
+            });
+
+            const data = await response.json();
+            if (data.error) throw new Error(data.error.message);
+
+            let textResult = data.candidates[0].content.parts[0].text;
+            textResult = textResult.replace(/```json|```/g, "").trim();
+            const parsedData = JSON.parse(textResult);
+
+            await addDoc(collection(db, "questions"), {
+                ...parsedData,
+                type: qType,
+                imageUrl: photoUrl,
+                createdAt: new Date()
+            });
+
+            statusDiv.style.color = "#27ae60";
+            statusDiv.innerText = "✅ Вопрос успешно сгенерирован и добавлен!";
+            fileInput.value = "";
+        } catch (err) {
+            console.error(err);
+            statusDiv.style.color = "#e74c3c";
+            statusDiv.innerText = "❌ Ошибка: " + err.message;
+        }
+    });
+
+    // 3. Логика Экзамена для учеников
+    async function startExam() {
+        const querySnapshot = await getDocs(collection(db, "questions"));
+        let allQuestions = [];
+        querySnapshot.forEach((doc) => {
+            allQuestions.push({ id: doc.id, ...doc.data() });
+        });
+
+        if (allQuestions.length === 0) {
+            document.getElementById('questionContainer').innerHTML = "<p>Вопросов пока нет. Попросите админа добавить карточки!</p>";
+            return;
+        }
+
+        // Перемешиваем все вопросы и берем ровно 20 (или меньше, если вопросов в базе пока меньше 20)
+        examQuestions = shuffle(allQuestions).slice(0, 20);
+        currentQuestionIndex = 0;
+        userAnswers = [];
+        renderQuestion();
+    }
+
+    function renderQuestion() {
+        const q = examQuestions[currentQuestionIndex];
+        const container = document.getElementById('questionContainer');
+        document.getElementById('progressInfo').innerText = `Вопрос ${currentQuestionIndex + 1} из ${examQuestions.length}`;
+
+        let html = `<div class="question-card">`;
+        if (q.imageUrl) {
+            html += `<img src="${q.imageUrl}" class="question-img">`;
+        }
+
+        if (q.type === 'translation') {
+            html += `<h3>Выберите правильный перевод слова: <b>"${q.question}"</b></h3>`;
+            const shuffledOptions = shuffle([...q.options]);
+            shuffledOptions.forEach(opt => {
+                html += `<button class="option-btn" onclick="selectOption(this, '${opt}')">${opt}</button>`;
+            });
+        } else if (q.type === 'blank') {
+            html += `<h3>Заполните пропуск в предложении (впишите слово с клавиатуры):</h3>`;
+            html += `<p style="font-size:18px;"><b>${q.sentence}</b></p>`;
+            html += `<input type="text" id="blankInput" placeholder="Введите пропущенное слово..." style="margin-top:10px;">`;
+        }
+        html += `</div>`;
+
+        container.innerHTML = html;
+
+        document.getElementById('nextBtn').classList.add('hidden');
+        document.getElementById('finishBtn').classList.add('hidden');
+
+        if (q.type === 'blank') {
+            const input = document.getElementById('blankInput');
+            input.addEventListener('input', () => {
+                userAnswers[currentQuestionIndex] = input.value.trim().toLowerCase();
+                toggleNavButtons();
+            });
+        }
+    }
+
+    window.selectOption = function(btn, value) {
+        document.querySelectorAll('.option-btn').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        userAnswers[currentQuestionIndex] = value;
+        toggleNavButtons();
+    };
+
+    function toggleNavButtons() {
+        if (currentQuestionIndex === examQuestions.length - 1) {
+            document.getElementById('finishBtn').classList.remove('hidden');
+            document.getElementById('nextBtn').classList.add('hidden');
+        } else {
+            document.getElementById('nextBtn').classList.remove('hidden');
+            document.getElementById('finishBtn').classList.add('hidden');
+        }
+    }
+
+    document.getElementById('nextBtn').addEventListener('click', () => {
+        currentQuestionIndex++;
+        renderQuestion();
+    });
+
+    // 4. Подсчет честной 10-балльной оценки и завершение
+    document.getElementById('finishBtn').addEventListener('click', async () => {
+        let correctCount = 0;
+
+        examQuestions.forEach((q, index) => {
+            const userAns = (userAnswers[index] || "").toLowerCase();
+            const correctAns = (q.correctAnswer || "").toLowerCase();
+
+            if (userAns === correctAns) {
+                correctCount++;
+            }
+        });
+
+        // Формула перевода в 10-балльную систему
+        const total = examQuestions.length;
+        const score10 = Math.round((correctCount / total) * 10);
+
+        // Сохранение результата ученика в БД Firestore
+        await addDoc(collection(db, "results"), {
+            student: currentUserEmail,
+            score: score10,
+            correctCount: correctCount,
+            totalQuestions: total,
+            date: new Date()
+        });
+
+        // Показ страницы результатов
+        document.getElementById('examSection').classList.add('hidden');
+        document.getElementById('resultSection').classList.remove('hidden');
+
+        document.getElementById('finalScore').innerText = `${score10} / 10`;
+        document.getElementById('correctCountText').innerText = `Правильных ответов: ${correctCount} из ${total}`;
+
+        // Вывод подробного разбора ошибок
+        let reviewHtml = "";
+        examQuestions.forEach((q, index) => {
+            const userAns = userAnswers[index] || "Нет ответа";
+            const correctAns = q.correctAnswer;
+            const isCorrect = userAns.toLowerCase() === correctAns.toLowerCase();
+
+            reviewHtml += `<div class="error-item">`;
+            reviewHtml += `<div><b>Вопрос ${index + 1}:</b> ${q.question || q.sentence}</div>`;
+            reviewHtml += `<div>Ваш ответ: <span class="${isCorrect ? 'correct' : 'wrong'}">${userAns}</span></div>`;
+            if (!isCorrect) {
+                reviewHtml += `<div>Правильный ответ: <span class="correct">${correctAns}</span></div>`;
+            }
+            reviewHtml += `</div>`;
+        });
+
+        document.getElementById('reviewContainer').innerHTML = reviewHtml;
+    });
+
+    // Вспомогательные функции
+    function shuffle(array) {
+        let arr = [...array];
+        for (let i = arr.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+        return arr;
+    }
+
+    function convertBase64(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = () => resolve(reader.result.split(',')[1]);
+            reader.onerror = error => reject(error);
+        });
+    }
+</script>
+
+</body>
+</html>
